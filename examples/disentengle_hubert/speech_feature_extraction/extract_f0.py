@@ -42,6 +42,6 @@ def extract_f0(manifest_path, output_dir, sr=16000, fmin=80, fmax=500):
 if __name__ == "__main__":
     PARSER = ArgumentParser()
     PARSER.add_argument("-p", "--manifest_path", help=".tsv file that is created by wav2vec_manifest.py format", required=True)
-    PARSER.add_argument("-o", "--output_dir", help="save extracted f0 and unvoiced to txt file", required=True)
+    PARSER.add_argument("-o", "--output_dir", help="save extracted f0 and voice tag to txt file", required=True)
     extract_f0(**vars(PARSER.parse_args()))   
 
