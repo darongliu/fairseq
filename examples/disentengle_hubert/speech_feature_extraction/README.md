@@ -15,7 +15,7 @@ following lines are the subpath for each audio:
 ### Speaker embedding Extraction
 - d-vector 
 `extract_dvector.py` use pretrained model `dvector.pt` to extract d-vector.
-#### input argument
+- input argument
 `-p`: dataset path in `.tsv`
 `-w`: wav2mel model path in `.pt`
 `-c`: dvector checkpoint path in `.pt`
@@ -33,10 +33,10 @@ following lines are the subpath for each audio:
 
 ### Pitch Extraction 
 `extract_f0.py` use `librosa.pyin` function to extract f0.
-#### input argument
+- input argument
 `-p`: dataset path in `.tsv`
 `-o`: output directory to save extracted f0 and voice tag to `.txt` file
-## Pitch clustering
+### Pitch clustering
 `cluster_f0.py`
 ### create discrete f0 label by pretrained kmeans model
 `label_f0.py`

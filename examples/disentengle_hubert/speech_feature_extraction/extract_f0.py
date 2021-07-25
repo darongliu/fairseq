@@ -34,7 +34,7 @@ def extract_f0(manifest_path, output_dir, sr=16000, fmin=80, fmax=500):
                 f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin, fmax, fill_na = 0.0, switch_prob=0.1, frame_length=320)
                 f0_reduced = [f0[4 * i] for i in range(tgt_len)]
                 voiced_flag = [voiced_flag[4 * i] for i in range(tgt_len)]
-                f0_tot.append(f0)
+                f0_tot.append(f0_reduced)
                 voiced_flag_tot.append(voiced_flag)
             pickle.dump(f0_tot, f1)
             pickle.dump(voiced_flag_tot, f2)
