@@ -161,15 +161,20 @@ class HubertPretrainingTask(FairseqTask):
         pad_list = [dict.pad() for dict in dicts]
         eos_list = [dict.eos() for dict in dicts]
         procs = [LabelEncoder(dict) for dict in dicts]
+        #TODO: support spk, f0 label
         paths = [
             f"{self.get_label_dir()}/{split}.{l}" for l in self.cfg.labels
-        ]
+        ] 
+        spk_paths = [f"{self.get_label_dir()}/{split}_spk.{l}" for l in self.cfg.labels] 
+        f0_paths = [f"{self.get_label_dir()}/{split}_f0.{l}" for l in self.cfg.labels]
 
         # hubert v1: pad_audio=True, random_crop=False;
         self.datasets[split] = HubertDataset(
             manifest,
             sample_rate=self.cfg.sample_rate,
             label_paths=paths,
+            spk_label_paths=spk_paths,
+            f0_label_paths=f0_paths,
             label_rates=self.cfg.label_rate,
             pad_list=pad_list,
             eos_list=eos_list,

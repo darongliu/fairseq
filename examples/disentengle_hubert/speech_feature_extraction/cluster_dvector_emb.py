@@ -1,6 +1,5 @@
 import numpy as np
 from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
 from sklearn.cluster import MiniBatchKMeans
 from tqdm import tqdm
 import joblib
@@ -9,14 +8,8 @@ import matplotlib.pyplot as plt
 import os
 from argparse import ArgumentParser
 
-def learn_spk_kmeans(spk_emb_path, output_dir, visualize=False, n_PCA=None, n_clusters=12, batch_size=10000, max_no_improvement=100, max_iter=300, n_init=20):
+def learn_spk_kmeans(spk_emb_path, split, output_dir, visualize=False, n_clusters=12, batch_size=10000, max_no_improvement=100, max_iter=300, n_init=20):
     x_train = np.load(spk_emb_path)
-    x_train = np.transpose(x_train) # (D, num_file) -> (num_file, D)
-    
-    if n_PCA: 
-    # do PCA first then kmeans
-        pca = PCA(n_components=n_PCA)
-        x_train = pca.fit_transform(x_train)
 
     km_model = MiniBatchKMeans(n_clusters=n_clusters, max_iter=max_iter,
                 batch_size=batch_size, max_no_improvement=max_no_improvement, n_init=n_init)
@@ -25,7 +18,7 @@ def learn_spk_kmeans(spk_emb_path, output_dir, visualize=False, n_PCA=None, n_cl
     kmeans = km_model.fit(x_train)
     print("[INFO] finish running kmeans")
     # save kmeans model 
-    km_path = os.path.join(output_dir, "kmeans_spk.pkl")
+    km_path = os.path.join(output_dir, f"{split}_kmeans_spk.pkl")
     joblib.dump(km_model, km_path)
 
     if visualize: 
@@ -51,9 +44,9 @@ def learn_spk_kmeans(spk_emb_path, output_dir, visualize=False, n_PCA=None, n_cl
 if __name__ == "__main__":
     PARSER = ArgumentParser()
     PARSER.add_argument("-p", "--spk_emb_path", required=True)
+    PARSER.add_argument("-s", "--split", help="dataset split name", required=True)
     PARSER.add_argument("-o", "--output_dir", help="the directory to save trained kmeans model", required=True)
     PARSER.add_argument("--visualize", action='store_true', help="whether to visualize kmeans result by tsne visualization")
-    PARSER.add_argument("--n_PCA", type=int, default=128, help="PCA first then do kmeans")
     PARSER.add_argument("--n_clusters", type=int, default=12, help="number of clusters for kmeans")
     PARSER.add_argument("--batch_size", default=10000, help="bsz of MiniBatchKMeans")
     learn_spk_kmeans(**vars(PARSER.parse_args()))

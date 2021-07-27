@@ -30,7 +30,8 @@ def extract_dvector(manifest_path, wav2mel_path, checkpoint_path, output_path):
             else: 
                 output = np.concatenate((output, emb_tensor), axis=1)
 
-    np.save(output_path, output) # (256, num_file)
+    output = np.transpose(output) # (D, num_file) -> (num_file, D) 
+    np.save(output_path, output) 
 
 if __name__ == "__main__":
     PARSER = ArgumentParser()
