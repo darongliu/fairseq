@@ -11,14 +11,16 @@ import pickle
 from argparse import ArgumentParser
 
 def learn_f0_kmeans(f0_path, voiced_flag_path, split, output_dir, visualize=False, n_clusters=12, batch_size=10000, max_no_improvement=100, max_iter=300, n_init=20):
-    # with open(f0_path, "rb") as f1:
-    #     f0 = pickle.load(f1)
-    f0 = np.load(f0_path)
-    voiced_flag = np.load(voiced_flag_path)
+    with open(f0_path, "rb") as f:
+        f0 = pickle.load(f)
+    with open(voiced_flag_path, "rb") as f:
+        voiced_flag = pickle.load(f)
+
     assert len(f0) == len(voiced_flag), "the number of records is mismatch between f0 and voiced_flag"
     print(f" the number of records is {len(f0)}")
     
     tot_voiced_f0 = []
+
     for i in tqdm(range(len(f0))):
         for j in range(len(f0[i])):
             if voiced_flag[i][j]: 

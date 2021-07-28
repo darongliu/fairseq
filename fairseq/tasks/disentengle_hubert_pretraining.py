@@ -155,6 +155,11 @@ class HubertPretrainingTask(FairseqTask):
             return self.cfg.data
         return self.cfg.label_dir
 
+    def get_feat_dir(self) -> str: 
+        if self.cfg.feat_dir is None:
+            return self.cfg.data
+        return self.cfg.feat_dir
+
     def load_dataset(self, split: str, **kwargs) -> None:
         manifest = f"{self.cfg.data}/{split}.tsv"
         dicts = [self.target_dictionary] if self.cfg.fine_tuning else self.dictionaries
@@ -162,20 +167,21 @@ class HubertPretrainingTask(FairseqTask):
         eos_list = [dict.eos() for dict in dicts]
         procs = [LabelEncoder(dict) for dict in dicts]
         #TODO: support spk, f0 label
-        paths = [
-            f"{self.get_label_dir()}/{split}.{l}" for l in self.cfg.labels
-        ] 
-        spk_paths = [f"{self.get_label_dir()}/{split}_spk.{l}" for l in self.cfg.labels] 
-        f0_paths = [f"{self.get_label_dir()}/{split}_f0.{l}" for l in self.cfg.labels]
-
+        paths = [f"{self.get_label_dir()}/{split}.{l}" for l in self.cfg.labels] 
+        #TODO: support spk, f0 feat
+        spk_feat_path = f"{self.get_feat_dir()}/{split}_spk.{self.cfg.feats[0]}"
+        f0_feat_path = f"{self.get_feat_dir()}/{split}_f0.{self.cfg.feats[1]}" 
+        voiced_flag_path = f"{self.get_feat_dir()}/{split}_voiced_flag.{self.cfg.feats[2]}"
         # hubert v1: pad_audio=True, random_crop=False;
         self.datasets[split] = HubertDataset(
             manifest,
             sample_rate=self.cfg.sample_rate,
             label_paths=paths,
-            spk_label_paths=spk_paths,
-            f0_label_paths=f0_paths,
+            spk_feat_path=spk_feat_path,
+            f0_feat_path=f0_feat_path,
+            voiced_flag_path=voiced_flag_path,
             label_rates=self.cfg.label_rate,
+            feat_label_rates = self.cfg.feat_label_rate,
             pad_list=pad_list,
             eos_list=eos_list,
             label_processors=procs,

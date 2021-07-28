@@ -12,7 +12,8 @@ from argparse import ArgumentParser
 import copy
 
 def label_f0(f0_path, km_path, split, output_dir, n_clusters=12):
-    f0 = np.load(f0_path)
+    with open(f0_path, "rb") as f:
+        f0 = pickle.load(f)
     km_model = joblib.load(km_path)
     discrete_f0 = copy.deepcopy(f0)
 

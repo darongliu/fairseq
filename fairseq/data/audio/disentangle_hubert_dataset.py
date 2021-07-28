@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 from fairseq.data import data_utils
 from fairseq.data.fairseq_dataset import FairseqDataset
+import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -57,21 +58,20 @@ def load_label(label_path, inds, tot):
     return labels
 
 #TODO
-def load_spk_label(spk_label_path, inds, tot):
-    with open(spk_label_path) as f:
-        labels = [line.rstrip() for line in f]
-    return labels
+def load_spk_feat(spk_feat_path):
+    return np.load(spk_feat_path)
 
-def load_f0_label(f0_label_path, inds, tot):
-    with open(f0_label_path) as f:
-        labels = [line.rstrip() for line in f]
-    return labels
-    
-def load_spk_emb():
-    pass
-def load_f0():
-    pass
 
+def load_f0_feat(f0_feat_path):
+    with open(f0_feat_path, "rb") as f:
+        f0 = pickle.load(f)
+    return f0
+
+
+def load_voiced_flag(voiced_flag_path):
+    with open(voiced_flag_path, "rb") as f:
+        voiced_flag = pickle.load(f)
+    return voiced_flag
 
 
 def load_label_offset(label_path, inds, tot):
@@ -130,8 +130,10 @@ class HubertDataset(FairseqDataset):
         manifest_path: str,
         sample_rate: float,
         label_paths: List[str],
-        spk_label_paths: List[str],
-        f0_label_paths: List[str],
+        spk_feat_path: List[str],
+        f0_feat_path: List[str],
+        voiced_flag_path: List[str],
+        feat_label_rates: Union[List[float], float],  # -1 for sequence labels
         label_rates: Union[List[float], float],  # -1 for sequence labels
         pad_list: List[str],
         eos_list: List[str],
@@ -163,6 +165,11 @@ class HubertDataset(FairseqDataset):
             if isinstance(label_rates, int)
             else label_rates
         )
+        self.feat_label_rates = (
+            [feat_label_rates for _ in range(len(feat_label_paths))]
+            if isinstance(feat_label_rates, int)
+            else feat_label_rates
+        )
         self.store_labels = store_labels
         if store_labels:
             self.label_list = [load_label(p, inds, tot) for p in label_paths]
@@ -179,9 +186,10 @@ class HubertDataset(FairseqDataset):
             verify_label_lengths(
                 self.sizes, sample_rate, label_path, label_rate, inds, tot
             )
-        # TODO: load f0 and spk label
-        self.f0_label_list = [load_spk_label(p, inds, tot) for p in label_paths]
-        self.spk_label_list = [load_f0_label(p, inds, tot) for p in label_paths]
+        # TODO: load f0, spk and voiced_flag feat
+        self.spk_feat_list = load_spk_feat(spk_feat_path) 
+        self.f0_feat_list = load_f0_feat(f0_feat_path) 
+        self.voiced_flag_list = load_voiced_flag(voiced_flag_path)
 
         self.max_sample_size = (
             max_sample_size if max_sample_size is not None else sys.maxsize
@@ -218,23 +226,30 @@ class HubertDataset(FairseqDataset):
     def get_labels(self, index):
         return [self.get_label(index, i) for i in range(self.num_labels)]
 
-##TODO 
-    def get_spk_label(self, index):
-        pass
-    def get_f0_label(self, index):
-        pass
-    def get_f0_labels(self, index):
-        pass
-    def get_spk_emb(self, index):
-        pass
-    def get_f0(self, index):
-        pass
+# TODO 
+    def get_spk_feat(self, index):
+        return self.spk_feat_list[index, :]
+
+    def get_f0_feat(self, index):
+        return self.f0_feat_list[index]
+
+    def get_voiced_flag(self, index):
+        return self.voiced_flag_list[index]
 
 
     def __getitem__(self, index):
         wav = self.get_audio(index)
         labels = self.get_labels(index)
-        return {"id": index, "source": wav, "label_list": labels}
+
+        # TODO: add new feature
+        spk_feat = self.get_spk_feat(index)
+        f0_feat = self.get_f0_feat(index)
+        voiced_flag = self.get_voiced_flag(index)
+
+        return {
+        "id": index, "source": wav, "label_list": labels,
+        "spk_feat": spk_feat, "f0_feat":f0_feat, "voiced_flag": voiced_flag
+        }
 
     def __len__(self):
         return len(self.sizes)
@@ -275,11 +290,29 @@ class HubertDataset(FairseqDataset):
         targets_list, lengths_list, ntokens_list = self.collater_label(
             targets_by_label, audio_size, audio_starts
         )
+        ## TODO: add for extra features
+        spk_feat = [s["spk_feat"] for s in samples]
+        f0_feat = [s["f0_feat"] for s in samples]
+        voiced_flag = [s["voiced_flag"] for s in samples]
+
+        spk_feat, spk_feat_lengths, spk_feat_ntokens = self.collater_seq_label(
+            spk_feat, audio_size, audio_starts, self.feat_label_rate[0], 0.0 # pad 0.0 to feat
+        )
+        f0_feat, f0_feat_lengths, f0_feat_ntokens = self.collater_frm_label(
+            f0_feat, audio_size, audio_starts, self.feat_label_rate[1], 0.0 # pad 0.0 to feat
+        )
+        # TODO: whether to use voiced_flag?
+        voiced_flag, voiced_flag_lengths, voiced_flag_ntokens = self.collater_frm_label(
+            voiced_flag, audio_size, audio_starts, self.feat_label_rate[2], False # pad 0.0 to feat
+        )
+        # extra feature
+        extra_feat = {"spk_feat": spk_feat, "f0_feat": f0_feat}
 
         net_input = {"source": collated_audios, "padding_mask": padding_mask}
         batch = {
             "id": torch.LongTensor([s["id"] for s in samples]),
             "net_input": net_input,
+            "extra_feat": extra_feat,
         }
 
         if self.single_target:
@@ -290,6 +323,7 @@ class HubertDataset(FairseqDataset):
             batch["target_lengths_list"] = lengths_list
             batch["ntokens_list"] = ntokens_list
             batch["target_list"] = targets_list
+        
         return batch
 
     def collater_audio(self, audios, audio_size):
@@ -319,7 +353,7 @@ class HubertDataset(FairseqDataset):
         self, targets, audio_size, audio_starts, label_rate, pad
     ):
         assert label_rate > 0
-        s2f = label_rate / self.sample_rate
+        s2f = label_rate / self.sample_rate # the data point length per label frame 
         frm_starts = [int(round(s * s2f)) for s in audio_starts]
         frm_size = int(round(audio_size * s2f))
         if not self.pad_audio:
