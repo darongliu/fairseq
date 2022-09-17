@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2017-present, Facebook, Inc.
 # All rights reserved.
 #
@@ -14,7 +13,6 @@ from typing import List, Optional, Tuple
 
 import torch
 from torch import Tensor
-
 
 # ------------------------------------------------------------------------------
 #   assert_equal()

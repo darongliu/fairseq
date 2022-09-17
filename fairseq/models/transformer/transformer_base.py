@@ -7,12 +7,22 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
+from torch import Tensor
+
+import logging
+
 from fairseq import utils
 from fairseq.dataclass.utils import gen_parser_from_dataclass
 from fairseq.distributed import fsdp_wrap
 from fairseq.models import FairseqEncoderDecoderModel
-from torch import Tensor
-from fairseq.models.transformer import (TransformerEncoderBase, TransformerDecoderBase, TransformerConfig)
+from fairseq.models.transformer import (
+    TransformerConfig,
+    TransformerDecoderBase,
+    TransformerEncoderBase,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 class TransformerModelBase(FairseqEncoderDecoderModel):
@@ -37,8 +47,8 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
         self.cfg = cfg
         self.supports_align_args = True
 
-    @staticmethod
-    def add_args(parser):
+    @classmethod
+    def add_args(cls, parser):
         """Add model-specific arguments to the parser."""
         # we want to build the args recursively in this case.
         gen_parser_from_dataclass(
@@ -49,10 +59,16 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
     def build_model(cls, cfg, task):
         """Build a new model instance."""
 
+        # --  TODO T96535332
+        #  bug caused by interaction between OmegaConf II and argparsing
+        cfg.decoder.input_dim = int(cfg.decoder.input_dim)
+        cfg.decoder.output_dim = int(cfg.decoder.output_dim)
+        # --
+
         if cfg.encoder.layers_to_keep:
-            cfg.encoder.layers = len(cfg.encoder.layers_to_keep.split(','))
+            cfg.encoder.layers = len(cfg.encoder.layers_to_keep.split(","))
         if cfg.decoder.layers_to_keep:
-            cfg.decoder.layers = len(cfg.decoder.layers_to_keep.split(','))
+            cfg.decoder.layers = len(cfg.decoder.layers_to_keep.split(","))
 
         src_dict, tgt_dict = task.source_dictionary, task.target_dictionary
 
@@ -74,6 +90,18 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
             )
             decoder_embed_tokens = encoder_embed_tokens
             cfg.share_decoder_input_output_embed = True
+        elif cfg.merge_src_tgt_embed:
+            logger.info(f"source dict size: {len(src_dict)}")
+            logger.info(f"target dict size: {len(tgt_dict)}")
+            src_dict.update(tgt_dict)
+            task.src_dict = src_dict
+            task.tgt_dict = src_dict
+            logger.info(f"merged dict size: {len(src_dict)}")
+            encoder_embed_tokens = cls.build_embedding(
+                cfg, src_dict, cfg.encoder.embed_dim
+            )
+            decoder_embed_tokens = encoder_embed_tokens
+            cfg.share_decoder_input_output_embed = True
         else:
             encoder_embed_tokens = cls.build_embedding(
                 cfg, src_dict, cfg.encoder.embed_dim, cfg.encoder.embed_path
@@ -85,10 +113,6 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
             cfg.checkpoint_activations = True  # offloading implies checkpointing
         encoder = cls.build_encoder(cfg, src_dict, encoder_embed_tokens)
         decoder = cls.build_decoder(cfg, tgt_dict, decoder_embed_tokens)
-        if not cfg.share_all_embeddings:
-            # fsdp_wrap is a no-op when --ddp-backend != fully_sharded
-            encoder = fsdp_wrap(encoder, min_num_params=cfg.min_params_to_wrap)
-            decoder = fsdp_wrap(decoder, min_num_params=cfg.min_params_to_wrap)
         return cls(cfg, encoder, decoder)
 
     @classmethod
@@ -164,6 +188,6 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
-    nn.init.normal_(m.weight, mean=0, std=embedding_dim ** -0.5)
+    nn.init.normal_(m.weight, mean=0, std=embedding_dim**-0.5)
     nn.init.constant_(m.weight[padding_idx], 0)
     return m
