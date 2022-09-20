@@ -25,7 +25,7 @@ paste -d' ' $tgt_dir/{all_sph.flist,all.uid} | \
   awk -v sph2wav=$sph2wav -v wav_dir=$wav_dir '{print sph2wav " -f wav " $1 " > " wav_dir "/" $2 ".wav"}' \
   > $tgt_dir/sph2wav.sh
 bash $tgt_dir/sph2wav.sh
-cat $tgt_dir/all.uid | awk -v wav_dir=$(pwd)/$wav_dir '{print $1" "wav_dir"/"$1".wav"}' | sort > $tgt_dir/all_wav.scp
+cat $tgt_dir/all.uid | awk -v wav_dir=$wav_dir '{print $1" "wav_dir"/"$1".wav"}' | sort > $tgt_dir/all_wav.scp
 cut -d' ' -f2 $tgt_dir/all_wav.scp | xargs -I{} soxi -s {} > $tgt_dir/all.dur
 paste -d' ' $tgt_dir/{all_wav.scp,all.dur} > $tgt_dir/all_wav_dur.scp
 rm $tgt_dir/{all.uid,all_sph.flist,sph2wav.sh}
