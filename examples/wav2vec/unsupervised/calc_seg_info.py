@@ -71,12 +71,32 @@ def compute_F(tensor):
 def read_pickle(path):
     return pk.load(open(path,'rb'))
 
+def gen_one_kmeans_seg(kmeans_cluster_seq, orc_utt, first_stage_merge_ratio=2):
+    total_mfcc_num = orc_utt[-1]+1
+    ratio = total_mfcc_num/len(kmeans_cluster_seq)
+    
+    kmeans_change_position = []
+    prev_cluster=None
+    for i, current_cluster in enumerate(kmeans_cluster_seq):
+        if current_cluster != prev_cluster:
+            kmeans_change_position.append(i)
+            prev_cluster = current_cluster
+    
+    kmeans_seg = [int(position*ratio) for position in kmeans_change_position[::first_stage_merge_ratio]]
+    if kmeans_seg[-1] > total_mfcc_num-1:
+        kmeans_seg[-1] = total_mfcc_num-1
+    elif kmeans_seg[-1] < total_mfcc_num-1:
+        kmeans_seg.append(total_mfcc_num-1)
+    
+    return kmeans_seg
+    
 
 def addParser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-o', '--orc_boundary_path', type=str, default='', help='')
-    parser.add_argument('-u', '--uns_boundary_path', type=str, default='', help='')
-    parser.add_argument('-p', '--periodic', action="store_true")
+    parser.add_argument('-o', '--orc_boundary_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/new-data/timit_for_GAN/audio/timit-train-orc1-bnd.pkl', help='')
+    parser.add_argument('-m', '--meta_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/new-data/timit_for_GAN/audio/timit-train-meta.pkl', help='')
+    parser.add_argument('-k', '--kmeans_src_path', type=str, default='/home/darong/frequent_data/wav2vecu/timit_processed/matched/feat/CLUS128/train.src', help='')
+    parser.add_argument('-t', '--kmeans_tsv_path', type=str, default='/home/darong/frequent_data/wav2vecu/timit_processed/matched/feat/CLUS128/train.tsv', help='')
 
     return parser
 
@@ -85,32 +105,32 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     orc = read_pickle(args.orc_boundary_path)
+    meta = read_pickle(args.meta_path)
 
-    if args.uns_boundary_path != '':
-        uns = read_pickle(args.uns_boundary_path)
+    all_kmeans_cluster_lines = open(args.kmeans_src_path, 'r').read().splitlines()
+    all_tsv_lines = open(args.kmeans_tsv_path, 'r').read().splitlines()
 
-        #stats = compare_boundaries(orc, uns)
-        stats = compare_boundaries(uns, orc)
-        R = compute_R(stats)
-        F, precision, recall = compute_F(stats)
+    utt_id2idx = {}
+    for i, tsv_line in enumerate(all_tsv_lines[1:]):
+        utt_id = tsv_line.split('.wav')[0].split('/')[-1].lower()
+        utt_id2idx[utt_id] = i
+    assert len(utt_id2idx) == len(all_kmeans_cluster_lines)
 
-        print(f'uns: R: {R}, F: {F}, PRC: {precision}, RCL: {recall}')
+    all_kmeans_seg = []
+    for i, utt in enumerate(orc):
+        utt_id = meta['prefix'][i]
+        utt_id = utt_id.split('_')[1] + '_'+utt_id.split('_')[2]
+        kmeans_idx = utt_id2idx[utt_id]
+        kmeans_cluster_seq = [int(x) for x in all_kmeans_cluster_lines[kmeans_idx].split(' ')]
+        kmeans_seg = gen_one_kmeans_seg(kmeans_cluster_seq, utt)
+        all_kmeans_seg.append(kmeans_seg)
+    
+    all_kmeans_seg = np.array(all_kmeans_seg, dtype=object)
 
-    if args.periodic:
-        uns = []
-        for utt in orc:
-            m = max(utt)
-            index = 0
-            uns_utt = []
-            while index <= m:
-                uns_utt.append(index)
-                index += 8
-            uns.append(uns_utt)
-        uns = np.array(uns, dtype=object)
+    stats = compare_boundaries(orc, all_kmeans_seg)
+    #stats = compare_boundaries(all_kmeans_seg, orc)
+    R = compute_R(stats)
+    F, precision, recall = compute_F(stats)
 
-        stats = compare_boundaries(uns, orc)
-        R = compute_R(stats)
-        F, precision, recall = compute_F(stats)
-
-        print(f'periodic: R: {R}, F: {F}, PRC: {precision}, RCL: {recall}')
+    print(f'uns: R: {R}, F: {F}, PRC: {precision}, RCL: {recall}')
 
