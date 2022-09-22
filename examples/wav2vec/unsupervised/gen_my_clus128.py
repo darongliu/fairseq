@@ -2,114 +2,66 @@ import torch
 import numpy as np
 import argparse
 import _pickle as pk
+import shutil
+import os
+
 
 """
 Metric definitions from: An improved speech segmentation quality measure: The R-value
 http://users.spa.aalto.fi/orasanen/papers/IS09_r_value.pdf
 """
 
-
-def boundary2location(boundaries):
-    maxlen = max([max(boundary) for boundary in boundaries]) + 1
-    locations = torch.zeros(len(boundaries), maxlen).long()
-    for bsxid, boundary in enumerate(boundaries):
-        locations[bsxid, boundary] = 1
-    return locations
-
-
-def compute_alignment(predicts_loc, reals_loc, one2one=True, T=2):
-    assert (len(predicts_loc) == len(reals_loc))
-    hits = torch.zeros(len(predicts_loc)).long()
-    detecteds = []
-    for bsxid, (predict_loc, real_loc) in enumerate(zip(predicts_loc, reals_loc)):
-        detected = []
-        real_positions = real_loc.nonzero().squeeze()
-        for idx in range(len(real_positions)):
-            now_pos = real_positions[idx]
-            start = max(now_pos - T, 0)
-            end = now_pos + (T+1)
-            if one2one:
-                if idx > 0 and real_positions[idx - 1] + (T+2) >= start:
-                    start = (real_positions[idx] + real_positions[idx - 1]) // 2
-                if idx < len(real_positions) - 1 and real_positions[idx + 1] - (T+1) <= end:
-                    end = (real_positions[idx] + real_positions[idx + 1]) // 2
-            if predict_loc[start:end].sum() > 0:
-                hits[bsxid] += 1
-                detected.append(now_pos.item())
-        detecteds.append(detected)
-    return hits, detecteds
-
-
-def compare_boundaries(predicts, reals, one2one=True, T=2):
-    predicts_loc = boundary2location(predicts)
-    reals_loc = boundary2location(reals)
-    hits, detecteds = compute_alignment(predicts_loc, reals_loc, one2one)
-    NC = hits.sum().float()
-    NT = predicts_loc.sum().float()
-    NG = reals_loc.sum().float()
-    return torch.tensor([NC, NT, NG])
-
-
-def compute_R(tensor):
-    NC, NT, NG = tensor
-    HR = (NC / NG) * 100.0
-    OS = ((NT / NG) - 1) * 100.0
-    r1 = np.sqrt(np.power((100.0 - HR), 2) + np.power(OS, 2))
-    r2 = (-OS + HR - 100.0) / np.sqrt(2)
-    R = 1 - (np.abs(r1) + np.abs(r2)) / 200.0
-    return R.item()
-
-
-def compute_F(tensor):
-    NC, NT, NG = tensor
-    PRC = NC / NT
-    RCL = NC / NG
-    F = (2 * PRC * RCL) / (PRC + RCL)
-    return [F.item(), PRC.item(), RCL.item()]
-
-
 def read_pickle(path):
     return pk.load(open(path,'rb'))
 
-def gen_one_kmeans_seg(kmeans_cluster_seq, orc_utt, first_stage_merge_ratio=2, phn_without_merge=None):
+def generate_one_new_kmeans_cluster_seq(origin_kmeans_cluster_seq, orc_utt):
     total_mfcc_num = orc_utt[-1]+1
-    ratio = total_mfcc_num/len(kmeans_cluster_seq)
+    ratio = total_mfcc_num/len(origin_kmeans_cluster_seq)
     
-    kmeans_change_position = []
-    prev_cluster=None
-    for i, current_cluster in enumerate(kmeans_cluster_seq):
-        if current_cluster != prev_cluster:
-            kmeans_change_position.append(i)
-            prev_cluster = current_cluster
-    
-    kmeans_seg = [int(position*ratio) for position in kmeans_change_position[::first_stage_merge_ratio]]
-    if kmeans_seg[-1] > total_mfcc_num-1:
-        kmeans_seg[-1] = total_mfcc_num-1
-    elif kmeans_seg[-1] < total_mfcc_num-1:
-        kmeans_seg.append(total_mfcc_num-1)
+    transformed_orc_utt_seg = [int(orc_seg/ratio) for orc_seg in orc_utt]
+    monotonic_transformed_orc_utt_seg = [transformed_orc_utt_seg[0]]
+    prev = transformed_orc_utt_seg[0]
+    for i in range(1, len(transformed_orc_utt_seg)):
+        if transformed_orc_utt_seg[i] > prev:
+            monotonic_transformed_orc_utt_seg.append(transformed_orc_utt_seg[i])
+            prev = transformed_orc_utt_seg[i]
+    monotonic_transformed_orc_utt_seg[-1] = len(origin_kmeans_cluster_seq)
 
-    if phn_without_merge is not None:
-        assert len(phn_without_merge) >= (len(kmeans_seg)-1)
-        origin_kmeans_seg = kmeans_seg
-        kmeans_seg = []
-        prev_phn = None
-        for i in range(len(kmeans_seg)-1):
-            current_phn = phn_without_merge[i]
-            if prev_phn != current_phn:
-                kmeans_seg.append(origin_kmeans_seg[i])
-                prev_phn = current_phn
-        kmeans_seg.append(origin_kmeans_seg[-1])
-
-    return kmeans_seg
+    new_kmeans_cluster_seq = [0]*len(origin_kmeans_cluster_seq)
     
+    fill_in_int = 0
+    for i in range(1, len(monotonic_transformed_orc_utt_seg)):
+        for j in range(monotonic_transformed_orc_utt_seg[i-1], monotonic_transformed_orc_utt_seg[i]):
+            new_kmeans_cluster_seq[j] = fill_in_int
+        fill_in_int = (fill_in_int+1)%3
+
+    return new_kmeans_cluster_seq
+    
+def generate_new_src_file(origin_src_path, origin_tsv_path, new_src_path, orc_utt_id2idx, orc):
+    all_kmeans_cluster_lines = open(origin_src_path, 'r').read().splitlines()
+    all_tsv_lines = open(origin_tsv_path, 'r').read().splitlines()
+    all_kmeans_utt_id = [tsv_line.split('.wav')[0].split('/')[-1].lower() for tsv_line in all_tsv_lines[1:]]
+    assert len(all_kmeans_utt_id) == len(all_kmeans_cluster_lines)
+
+    all_new_kmeans_cluster_lines = []
+    for i in range(len(all_kmeans_cluster_lines)):
+        kmeans_utt_id = all_kmeans_utt_id[i]
+        kmeans_cluster_seq = [int(x) for x in all_kmeans_cluster_lines[i].split(' ')]
+        new_kmeans_cluster_seq = generate_one_new_kmeans_cluster_seq(kmeans_cluster_seq, orc[orc_utt_id2idx[kmeans_utt_id]])
+        all_new_kmeans_cluster_lines.append(' '.join([str(x) for x in new_kmeans_cluster_seq]))
+    with open(new_src_path, 'w') as f:
+        for line in all_new_kmeans_cluster_lines:
+            f.write(line)
+            f.write('\n')
 
 def addParser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-o', '--orc_boundary_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/new-data/timit_for_GAN/audio/timit-train-orc1-bnd.pkl', help='')
-    parser.add_argument('-m', '--meta_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/new-data/timit_for_GAN/audio/timit-train-meta.pkl', help='')
-    parser.add_argument('-k', '--kmeans_src_path', type=str, default='/home/darong/frequent_data/wav2vecu/timit_processed/matched/feat/CLUS128/train.src', help='')
-    parser.add_argument('-t', '--kmeans_tsv_path', type=str, default='/home/darong/frequent_data/wav2vecu/timit_processed/matched/feat/CLUS128/train.tsv', help='')
-    parser.add_argument('-p', '--phn_without_merge_path', type=str, default='', help='')
+    parser.add_argument('-train_o', '--train_orc_boundary_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/nonmatch-data/timit_for_GAN/audio/timit-train-orc1-bnd.pkl', help='')
+    parser.add_argument('-train_m', '--train_meta_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/nonmatch-data/timit_for_GAN/audio/timit-train-meta.pkl', help='')
+    parser.add_argument('-test_o', '--test_orc_boundary_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/nonmatch-data/timit_for_GAN/audio/timit-test-orc1-bnd.pkl', help='')
+    parser.add_argument('-test_m', '--test_meta_path', type=str, default='/home/darong/frequent_data/GAN_Harmonized_with_HMMs/nonmatch-data/timit_for_GAN/audio/timit-test-meta.pkl', help='')
+    parser.add_argument('-o', '--origin_clus128_dir', type=str, default='', help='')
+    parser.add_argument('-n', '--new_clus128_dir', type=str, default='', help='')
 
     return parser
 
@@ -117,40 +69,67 @@ if __name__ == '__main__':
     parser = addParser()
     args = parser.parse_args()
 
-    orc = read_pickle(args.orc_boundary_path)
-    meta = read_pickle(args.meta_path)
+    os.makedirs(args.new_clus128_dir, exist_ok=True)
 
-    all_kmeans_cluster_lines = open(args.kmeans_src_path, 'r').read().splitlines()
-    all_tsv_lines = open(args.kmeans_tsv_path, 'r').read().splitlines()
-    if args.phn_without_merge_path != '':
-        all_phn_without_merge_lines = open(args.phn_without_merge_path, 'r').read().splitlines()
-    else:
-        all_phn_without_merge_lines = None
+    orc = read_pickle(args.train_orc_boundary_path)
+    meta = read_pickle(args.train_meta_path)
+    assert len(orc) == len(meta['prefix'])
 
-    utt_id2idx = {}
-    for i, tsv_line in enumerate(all_tsv_lines[1:]):
-        utt_id = tsv_line.split('.wav')[0].split('/')[-1].lower()
-        utt_id2idx[utt_id] = i
-    assert len(utt_id2idx) == len(all_kmeans_cluster_lines)
-    if all_phn_without_merge_lines is not None:
-        assert len(utt_id2idx) == len(all_phn_without_merge_lines)
-
-    all_kmeans_seg = []
-    for i, utt in enumerate(orc):
+    orc_utt_id2idx = {}
+    for i in range(len(orc)):
         utt_id = meta['prefix'][i]
         utt_id = utt_id.split('_')[1] + '_'+utt_id.split('_')[2]
-        kmeans_idx = utt_id2idx[utt_id]
-        kmeans_cluster_seq = [int(x) for x in all_kmeans_cluster_lines[kmeans_idx].split(' ')]
-        phn_without_merge = all_phn_without_merge_lines[kmeans_idx].split(' ') if all_phn_without_merge_lines else None
-        kmeans_seg = gen_one_kmeans_seg(kmeans_cluster_seq, utt, phn_without_merge=phn_without_merge)
-        all_kmeans_seg.append(kmeans_seg)
+        orc_utt_id2idx[utt_id] = i
     
-    all_kmeans_seg = np.array(all_kmeans_seg, dtype=object)
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'train.tsv'),
+        os.path.join(args.new_clus128_dir, 'train.tsv')
+    )
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'train.phn'),
+        os.path.join(args.new_clus128_dir, 'train.phn')
+    )
+    generate_new_src_file(
+        os.path.join(args.origin_clus128_dir, 'train.src'), 
+        os.path.join(args.origin_clus128_dir, 'train.tsv'), 
+        os.path.join(args.new_clus128_dir, 'train.src'), 
+        orc_utt_id2idx, orc
+    )
 
-    stats = compare_boundaries(orc, all_kmeans_seg)
-    #stats = compare_boundaries(all_kmeans_seg, orc)
-    R = compute_R(stats)
-    F, precision, recall = compute_F(stats)
 
-    print(f'uns: R: {R}, F: {F}, PRC: {precision}, RCL: {recall}')
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'valid.tsv'),
+        os.path.join(args.new_clus128_dir, 'valid.tsv')
+    )
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'valid.phn'),
+        os.path.join(args.new_clus128_dir, 'valid.phn')
+    )
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'valid.src'),
+        os.path.join(args.new_clus128_dir, 'valid.src')
+    )
 
+    orc = read_pickle(args.test_orc_boundary_path)
+    meta = read_pickle(args.test_meta_path)
+    assert len(orc) == len(meta['prefix'])
+
+    orc_utt_id2idx = {}
+    for i in range(len(orc)):
+        utt_id = meta['prefix'][i]
+        utt_id = utt_id.split('_')[1] + '_'+utt_id.split('_')[2]
+        orc_utt_id2idx[utt_id] = i
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'test.tsv'),
+        os.path.join(args.new_clus128_dir, 'test.tsv')
+    )
+    shutil.copyfile(
+        os.path.join(args.origin_clus128_dir, 'test.phn'),
+        os.path.join(args.new_clus128_dir, 'test.phn')
+    )
+    generate_new_src_file(
+        os.path.join(args.origin_clus128_dir, 'test.src'), 
+        os.path.join(args.origin_clus128_dir, 'test.tsv'), 
+        os.path.join(args.new_clus128_dir, 'test.src'), 
+        orc_utt_id2idx, orc
+    )
