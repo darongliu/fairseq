@@ -562,7 +562,20 @@ def gen_hypos(generator, models, num_feats, sample, task, use_cuda):
             sample["net_input"]["features"].shape[0]
             * sample["net_input"]["features"].shape[1]
         )
-    hypos = task.inference_step(generator, models, sample, None)
+    print('shape', sample["net_input"]["features"].shape)
+    print('padding_mask shape', sample["net_input"]["padding_mask"].shape)
+    # hypos = task.inference_step(generator, models, sample, None)
+    hypos = [[{
+        'tokens': torch.argmax(models[0](
+            sample["net_input"]["features"], 
+            sample["net_input"]['padding_mask'], 
+            dense_x_only=True,
+            segment=False
+        )['logits'][0], -1),
+        'scores': 0
+    }]]
+    print('hypo', len(hypos[0][0]['tokens']))
+
     return hypos, num_feats
 
 
